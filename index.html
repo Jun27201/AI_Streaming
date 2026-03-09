@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI配信ビューワー 🎮</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Oswald:wght@700&display=swap');
+
+  :root {
+    --bg: #0e0e10; --surface: #18181b; --surface2: #1f1f23;
+    --border: #2a2a2d; --purple: #9147ff; --purple-light: #bf94ff;
+    --green: #00db7f; --red: #e91916; --text: #efeff1; --text-muted: #adadb8;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Noto Sans JP',sans-serif; height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+
+  .header { background:var(--surface); border-bottom:1px solid var(--border); padding:10px 16px; display:flex; align-items:center; gap:12px; flex-shrink:0; }
+  .live-badge { background:var(--red); color:white; font-size:11px; font-weight:700; padding:3px 8px; border-radius:3px; letter-spacing:1px; animation:pulse 2s infinite; }
+  .header-title { font-weight:700; font-size:16px; }
+  .viewer-count { margin-left:auto; color:var(--text-muted); font-size:13px; display:flex; align-items:center; gap:5px; }
+  .viewer-dot { width:8px; height:8px; background:var(--red); border-radius:50%; animation:pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+
+  .main { display:flex; flex:1; overflow:hidden; }
+
+  .screen-area { flex:1; display:flex; flex-direction:column; padding:12px; gap:10px; overflow:hidden; }
+
+  .screen-preview { flex:1; background:#000; border-radius:8px; border:2px solid var(--border); position:relative; overflow:hidden; min-height:0; display:flex; align-items:center; justify-content:center; }
+  .screen-preview video { width:100%; height:100%; object-fit:contain; }
+  .screen-placeholder { text-align:center; color:var(--text-muted); }
+  .screen-placeholder .icon { font-size:48px; margin-bottom:12px; }
+  .screen-placeholder p { font-size:14px; line-height:1.8; }
+  .ai-status { position:absolute; top:10px; right:10px; background:rgba(0,0,0,0.8); border:1px solid var(--purple); border-radius:20px; padding:4px 12px; font-size:12px; color:var(--purple-light); }
+
+  /* ニコニコ */
+  #overlayContainer { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+  .nico-comment { position:absolute; white-space:nowrap; font-size:22px; font-weight:900; font-family:'Noto Sans JP',sans-serif; text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000; animation:nicoScroll linear forwards; pointer-events:none; }
+  @keyframes nicoScroll { from{transform:translateX(0)} to{transform:translateX(calc(-100% - 100vw))} }
+  .nico-superchat { position:absolute; bottom:30px; left:50%; transform:translateX(-50%); border-radius:10px; padding:12px 20px; pointer-events:none; animation:scPop .5s cubic-bezier(.34,1.56,.64,1) forwards,scFade .5s ease 4.5s forwards; text-align:center; box-shadow:0 4px 20px rgba(0,0,0,.5); z-index:10; white-space:nowrap; }
+  @keyframes scPop { from{opacity:0;transform:translateX(-50%) scale(.7)} to{opacity:1;transform:translateX(-50%) scale(1)} }
+  @keyframes scFade { to{opacity:0} }
+
+  /* 視聴者数ウィジェット */
+  #viewerWidget { position:absolute; top:10px; left:10px; background:rgba(0,0,0,.75); border:1px solid rgba(255,255,255,.15); border-radius:12px; padding:8px 14px; display:none; flex-direction:column; gap:4px; backdrop-filter:blur(8px); pointer-events:none; }
+  .widget-row { display:flex; align-items:center; gap:7px; }
+  .widget-live { background:var(--red); color:#fff; font-size:10px; font-weight:700; padding:1px 5px; border-radius:3px; letter-spacing:1px; animation:pulse 2s infinite; }
+  .widget-count { font-size:22px; font-weight:900; color:#fff; font-family:'Oswald',sans-serif; }
+  .widget-label { font-size:10px; color:rgba(255,255,255,.6); }
+  .widget-graph { display:flex; align-items:flex-end; gap:2px; height:20px; }
+  .widget-bar { width:4px; background:var(--purple); border-radius:2px; transition:height .5s ease; min-height:2px; }
+
+  .controls { display:flex; gap:8px; align-items:center; flex-shrink:0; flex-wrap:wrap; }
+  .btn { padding:9px 18px; border-radius:6px; border:none; font-family:'Noto Sans JP',sans-serif; font-size:13px; font-weight:700; cursor:pointer; transition:all .15s; display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .btn:disabled { opacity:.4; cursor:not-allowed; }
+  .btn-primary { background:var(--purple); color:white; }
+  .btn-primary:hover:not(:disabled) { background:#7c3aed; transform:translateY(-1px); }
+  .btn-secondary { background:var(--surface2); color:var(--text); border:1px solid var(--border); }
+  .btn-secondary:hover:not(:disabled) { background:var(--border); }
+  .btn-green { background:var(--green); color:#000; }
+  .btn-green:hover:not(:disabled) { background:#00c070; }
+  .btn-red { background:var(--red); color:white; }
+  .auto-badge { background:var(--green); color:#000; font-size:10px; padding:2px 6px; border-radius:10px; font-weight:700; animation:pulse 1s infinite; }
+  .interval-select { background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:6px; font-size:13px; font-family:'Noto Sans JP',sans-serif; cursor:pointer; }
+
+  .capture-status { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 16px; font-size:13px; color:var(--text-muted); display:flex; align-items:center; gap:8px; flex-shrink:0; transition:all .3s; }
+  .capture-status.active { border-color:var(--green); color:var(--green); }
+  .capture-dot { width:8px; height:8px; border-radius:50%; background:currentColor; flex-shrink:0; }
+  .capture-status.active .capture-dot { animation:pulse 1s infinite; }
+
+  /* Chat */
+  .chat-area { width:320px; background:var(--surface); border-left:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; flex-shrink:0; }
+  .chat-header { padding:10px 14px; border-bottom:1px solid var(--border); font-size:13px; font-weight:700; display:flex; align-items:center; gap:8px; }
+  .chat-messages { flex:1; overflow-y:auto; padding:8px 0; display:flex; flex-direction:column; gap:2px; }
+  .chat-messages::-webkit-scrollbar { width:4px; }
+  .chat-messages::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+  .superchat { margin:6px 10px; border-radius:8px; padding:10px 12px; animation:slideIn .4s cubic-bezier(.34,1.56,.64,1); }
+  .superchat-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .superchat-name { font-weight:700; font-size:13px; }
+  .superchat-amount { font-weight:900; font-size:15px; font-family:'Oswald',sans-serif; }
+  .superchat-message { font-size:13px; line-height:1.5; }
+  .sc-red    { background:linear-gradient(135deg,#e91916,#c0392b); color:white; }
+  .sc-orange { background:linear-gradient(135deg,#ff6600,#e65c00); color:white; }
+  .sc-yellow { background:linear-gradient(135deg,#ffb800,#f39c12); color:#000; }
+  .sc-green  { background:linear-gradient(135deg,#00b86b,#009959); color:white; }
+  .sc-blue   { background:linear-gradient(135deg,#1565c0,#0d47a1); color:white; }
+  .sc-teal   { background:linear-gradient(135deg,#00acc1,#00838f); color:white; }
+
+  .chat-msg { padding:4px 14px; font-size:13px; line-height:1.5; animation:slideIn .3s ease; display:flex; gap:6px; align-items:flex-start; }
+  .chat-msg:hover { background:rgba(255,255,255,.03); }
+  .chat-avatar { width:18px; height:18px; border-radius:50%; flex-shrink:0; margin-top:1px; font-size:10px; display:flex; align-items:center; justify-content:center; font-weight:700; }
+  .chat-username { font-weight:700; margin-right:4px; }
+  @keyframes slideIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+
+  .thinking-indicator { padding:8px 14px; font-size:12px; color:var(--purple-light); display:flex; align-items:center; gap:8px; }
+  .dots { display:flex; gap:3px; }
+  .dot { width:5px; height:5px; background:var(--purple); border-radius:50%; animation:bounce 1.2s infinite; }
+  .dot:nth-child(2){animation-delay:.2s} .dot:nth-child(3){animation-delay:.4s}
+  @keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-5px)} }
+
+  .comment-count { margin-left:auto; background:var(--purple); color:white; font-size:11px; padding:2px 7px; border-radius:10px; }
+
+  /* 設定パネル */
+  .settings-panel { border-top:1px solid var(--border); padding:10px 14px; display:flex; flex-direction:column; gap:8px; }
+  .settings-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .settings-label { font-size:11px; color:var(--text-muted); white-space:nowrap; }
+  .style-chip { padding:4px 10px; border-radius:20px; border:1px solid var(--border); background:transparent; color:var(--text-muted); font-size:11px; font-family:'Noto Sans JP',sans-serif; cursor:pointer; transition:all .15s; white-space:nowrap; }
+  .style-chip.active { background:var(--purple); border-color:var(--purple); color:white; }
+  .style-chip:hover:not(.active) { border-color:var(--purple-light); color:var(--purple-light); }
+
+  .output-section { padding:6px 14px; border-top:1px solid var(--border); display:flex; gap:6px; flex-wrap:wrap; }
+
+  .api-section { padding:10px 14px; border-top:1px solid var(--border); }
+  .api-label { font-size:11px; color:var(--text-muted); margin-bottom:5px; }
+  .api-input { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:7px 10px; border-radius:5px; font-size:12px; font-family:monospace; }
+  .api-input:focus { outline:none; border-color:var(--purple); }
+
+  .join-notice { padding:4px 14px; font-size:12px; color:var(--green); display:flex; align-items:center; gap:6px; animation:slideIn .3s ease; }
+  .leave-notice { padding:4px 14px; font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:6px; animation:slideIn .3s ease; }
+
+  /* デモモード */
+  .demo-screen {
+    width:100%; height:100%; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:12px;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #efeff1;
+  }
+  .demo-icon { font-size:52px; }
+  .demo-title { font-size:18px; font-weight:900; }
+  .demo-sub { font-size:13px; color:#adadb8; text-align:center; line-height:1.7; }
+  .demo-topic-row { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:4px; }
+  .demo-topic {
+    padding:6px 14px; border-radius:20px; border:1px solid rgba(145,71,255,0.4);
+    background:rgba(145,71,255,0.15); color:#bf94ff; font-size:13px; cursor:pointer;
+    transition:all .15s; font-family:'Noto Sans JP',sans-serif;
+  }
+  .demo-topic:hover, .demo-topic.selected { background:rgba(145,71,255,0.5); border-color:#9147ff; color:#fff; }
+
+  /* スマホ用レイアウト */
+  @media (max-width: 640px) {
+    body { height:auto; min-height:100vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+    .main { flex-direction:column; height:auto; overflow:visible; }
+    .screen-area { padding:8px; gap:8px; height:auto; overflow:visible; }
+    .screen-preview { min-height:280px; flex:none; height:280px; }
+    .chat-area { width:100%; border-left:none; border-top:1px solid var(--border); height:auto; min-height:300px; overflow:visible; }
+    .chat-messages { overflow-y:auto; max-height:260px; -webkit-overflow-scrolling:touch; }
+    .controls { gap:6px; flex-wrap:wrap; }
+    .btn { padding:8px 12px; font-size:12px; }
+    .interval-select { font-size:12px; padding:7px 8px; }
+    .settings-panel { padding:8px 10px; }
+    .settings-row { gap:6px; }
+    .style-chip { font-size:11px; padding:5px 10px; }
+    .output-section { padding:6px 10px; }
+    .api-section { padding:8px 10px; }
+    .header-title { font-size:14px; }
+    .capture-status { font-size:12px; padding:8px 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="live-badge">● LIVE</span>
+  <span class="header-title">🎮 AI視聴者チャット</span>
+  <div class="viewer-count">
+    <div class="viewer-dot"></div>
+    <span id="viewerCount">0</span> 人が視聴中
+  </div>
+</div>
+
+<div class="main">
+  <div class="screen-area">
+    <div class="screen-preview" id="screenPreview">
+      <video id="screenVideo" autoplay muted playsinline style="display:none"></video>
+      <canvas id="captureCanvas" style="display:none"></canvas>
+      <div id="overlayContainer" style="display:none"></div>
+      <div id="viewerWidget">
+        <div class="widget-row">
+          <span class="widget-live">LIVE</span>
+          <span class="widget-count" id="widgetCount">0</span>
+          <span class="widget-label">視聴中</span>
+        </div>
+        <div class="widget-graph" id="widgetGraph"></div>
+      </div>
+      <div class="screen-placeholder" id="placeholder">
+        <div id="normalPlaceholder" style="display:none">
+          <div class="icon">🖥️</div>
+          <p id="placeholderText">「画面共有を開始」ボタンを押して<br>デスクトップを共有してください</p>
+        </div>
+      </div>
+      <div class="ai-status" id="aiStatus" style="display:none">🤖 AI視聴中...</div>
+    </div>
+
+    <!-- テーマ選択UI（screen-previewの外に配置） -->
+    <div id="demoScreen" class="demo-screen" style="border-radius:8px;border:2px solid var(--border);flex-shrink:0;">
+      <div class="demo-icon">🎮</div>
+      <div class="demo-title">デモモード</div>
+      <div class="demo-sub">テーマをタップしてデモを開始！<br>（APIキー不要）</div>
+      <div class="demo-topic-row" id="demoTopics">
+        <button class="demo-topic" onclick="selectTopic(this,'ゲーム実況（FPS）')">🎯 FPS</button>
+        <button class="demo-topic" onclick="selectTopic(this,'マインクラフト')">⛏️ マイクラ</button>
+        <button class="demo-topic" onclick="selectTopic(this,'料理配信')">🍳 料理</button>
+        <button class="demo-topic" onclick="selectTopic(this,'雑談配信')">💬 雑談</button>
+        <button class="demo-topic" onclick="selectTopic(this,'プログラミング配信')">💻 プログラミング</button>
+        <button class="demo-topic" onclick="selectTopic(this,'歌ってみた')">🎤 歌</button>
+        <button class="demo-topic" onclick="selectTopic(this,'音楽ライブ配信')">🎸 ライブ</button>
+        <button class="demo-topic" onclick="selectTopic(this,'ポケモン対戦')">⚡ ポケモン</button>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn btn-primary" id="shareBtn" onclick="startCapture()" style="display:none">🖥️ 画面共有を開始</button>
+      <button class="btn btn-secondary" id="demoBtn" onclick="toggleDemo()">📱 デモモード</button>
+      <button class="btn btn-red" id="stopBtn" onclick="stopCapture()" style="display:none">⏹ 共有停止</button>
+      <button class="btn btn-red" id="stopDemoBtn" onclick="stopDemo()" style="display:none">⏹ デモ停止</button>
+      <button class="btn btn-secondary" id="analyzeBtn" onclick="analyzeNow()">🎯 今すぐコメント</button>
+      <button class="btn btn-green" id="autoBtn" onclick="toggleAuto()">▶ 自動モード</button>
+      <select class="interval-select" id="intervalSelect">
+        <option value="5000">5秒おき</option>
+        <option value="10000" selected>10秒おき</option>
+        <option value="20000">20秒おき</option>
+        <option value="30000">30秒おき</option>
+      </select>
+      <span id="autoBadge" class="auto-badge" style="display:none">AUTO ON</span>
+    </div>
+
+    <div class="capture-status" id="captureStatus">
+      <div class="capture-dot"></div>
+      <span id="captureStatusText">画面共有していません — まず「画面共有を開始」を押してください</span>
+    </div>
+
+  </div>
+
+  <div class="chat-area">
+    <div class="chat-header">
+      💬 チャット
+      <span class="comment-count" id="commentCount">0</span>
+    </div>
+    <div class="chat-messages" id="chatMessages"></div>
+    <div class="thinking-indicator" id="thinkingIndicator" style="display:none">
+      <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+      AIが画面を分析中...
+    </div>
+
+    <!-- コメントスタイル設定 -->
+    <div class="settings-panel">
+      <div class="settings-label">💬 コメントスタイル（複数選択可）</div>
+      <div class="settings-row" id="styleChips">
+        <button class="style-chip active" data-style="ネットスラング多め">ネットスラング</button>
+        <button class="style-chip" data-style="リアクション大げさ">大げさリアクション</button>
+        <button class="style-chip" data-style="技術的なツッコミ多め">技術系</button>
+        <button class="style-chip" data-style="ゆるくまったり">まったり</button>
+        <button class="style-chip" data-style="ガチ勢っぽい上から目線">ガチ勢</button>
+        <button class="style-chip" data-style="新規さん多め（質問が多い）">新規さん多め</button>
+        <button class="style-chip" data-style="推しへの愛が重い">重めの愛</button>
+        <button class="style-chip" data-style="ボケとツッコミの掛け合い">漫才系</button>
+      </div>
+    </div>
+
+    <div class="output-section">
+      <button class="btn btn-secondary" id="nicoBtn" onclick="toggleNico()" style="font-size:12px;padding:7px 12px">🎌 ニコニコ風 OFF</button>
+      <button class="btn btn-secondary" id="widgetBtn" onclick="toggleWidget()" style="font-size:12px;padding:7px 12px">📊 視聴者数 OFF</button>
+      <button class="btn btn-secondary" id="popupBtn" onclick="openPopupWindow()" style="font-size:12px;padding:7px 12px">🪟 別ウィンドウ</button>
+    </div>
+
+    <div class="api-section">
+      <div class="api-label">Gemini API キー</div>
+      <input type="password" class="api-input" id="apiKey" placeholder="AIza..." />
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// ローカル視聴者ジェネレーター（APIコストゼロ）
+// ============================================================
+const NAME_PARTS = {
+  prefix: ['ゆき','はな','こう','たか','みな','りょう','あお','そら','ひな','けん','まさ','のぞ','いと','つき','れん','かい','ねこ','うさ','くま','きつね'],
+  suffix: ['ちゃん','くん','P','氏','兄貴','先生','丸','子','太郎','次郎','star','LV','gg','zz','ww'],
+  numbers: ['0','7','99','777','1','23','888','00','_','__'],
+  prefix2: ['K_','M_','R_','S_','t_','y_','h_','__','vv','xx'],
+  words:   ['neko','yuki','hana','game','live','pro','gg','kami','noob','push'],
+};
+
+const EMOJIS = ['🐔','😎','⭐','🎮','🌸','👾','🍡','🍜','🌀','😄','🌻','🐱','🥔','🦊','🐻','🎯','🔥','💫','🌈','🎸','🍕','🤖','👻','🦄','🐸','🎃','💎','🚀','🌙','⚡'];
+const COLORS = ['#ff69b4','#00aaff','#ffcc00','#00db7f','#ff6b9d','#9147ff','#ff8c00','#e74c3c','#1abc9c','#3498db','#f1c40f','#8e44ad','#e67e22','#2ecc71','#e91e8c','#00bcd4','#ff5722','#607d8b','#9c27b0','#ff9800'];
+
+let viewerPool = []; // 生成済み視聴者プール
+let viewerIndex = 0;
+
+function generateLocalViewer() {
+  const style = Math.floor(Math.random() * 4);
+  let name;
+  if (style === 0) {
+    name = pick(NAME_PARTS.prefix) + pick(NAME_PARTS.suffix) + pick(NAME_PARTS.numbers);
+  } else if (style === 1) {
+    name = pick(NAME_PARTS.prefix2) + pick(NAME_PARTS.words) + pick(NAME_PARTS.numbers);
+  } else if (style === 2) {
+    name = pick(NAME_PARTS.prefix) + pick(NAME_PARTS.prefix) + pick(NAME_PARTS.numbers);
+  } else {
+    name = pick(NAME_PARTS.words) + '_' + pick(NAME_PARTS.prefix) + Math.floor(Math.random()*100);
+  }
+  return {
+    name,
+    emoji: EMOJIS[Math.floor(Math.random() * EMOJIS.length)],
+    color: COLORS[Math.floor(Math.random() * COLORS.length)],
+  };
+}
+
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// 必要なだけ視聴者を取得（プールから or 新規生成）
+function getViewers(count) {
+  while (viewerPool.length < viewerIndex + count) {
+    viewerPool.push(generateLocalViewer());
+  }
+  // 視聴者数に応じて使うインデックス範囲をずらして多様性を出す
+  const available = viewerPool.slice(0, Math.min(viewerPool.length, Math.max(30, Math.floor(viewerCount / 10))));
+  const shuffled = [...available].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
+function getOneViewer() {
+  if (viewerPool.length === 0) viewerPool.push(generateLocalViewer());
+  return viewerPool[Math.floor(Math.random() * Math.min(viewerPool.length, Math.max(10, Math.floor(viewerCount / 10))))];
+}
+
+function rnd(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+// ============================================================
+// バッチ計画：AIコメント数（リアル比率）
+// 目安: 100人→3〜8件, 1000人→20〜50件, 1万人→100〜300件
+// AIバッチ上限は5並列×15件=75件。残りはローカル補完で水増し。
+// ============================================================
+function calcBatchPlan(viewers) {
+  if (viewers < 10)    return { batches: 1, perBatch: rnd(1,2),   localMult: 0 };
+  if (viewers < 50)    return { batches: 1, perBatch: rnd(3,5),   localMult: 0 };
+  if (viewers < 200)   return { batches: 1, perBatch: rnd(5,8),   localMult: 0 };
+  if (viewers < 500)   return { batches: 2, perBatch: rnd(7,10),  localMult: 1 };  // AI:14〜20 + local×1
+  if (viewers < 1000)  return { batches: 2, perBatch: rnd(10,13), localMult: 2 };  // AI:20〜26 + local×2
+  if (viewers < 3000)  return { batches: 3, perBatch: rnd(10,13), localMult: 3 };  // AI:30〜39 + local×3
+  if (viewers < 10000) return { batches: 4, perBatch: rnd(12,15), localMult: 5 };  // AI:48〜60 + local×5
+  if (viewers < 50000) return { batches: 5, perBatch: rnd(13,15), localMult: 8 };  // AI:65〜75 + local×8
+  return               { batches: 5, perBatch: 15,                localMult: 15 }; // AI:75 + local×15
+}
+
+// ============================================================
+// ローカルコメント量産（草・同意系・リアクション系）
+// AIコメントに混ぜてリアルな流速を出す
+// ============================================================
+const KUSA_PATTERNS = [/^w+$/i, /^草+$/, /^ｗ+$/, /^lol+$/i, /^笑+$/, /^ww+$/i];
+const KUSA_VARIANTS  = ['w','ww','www','wwww','草','草草','ｗ','ｗｗ','ｗｗｗ','lol','笑','笑笑'];
+
+// ============================================================
+// ローカルコメント辞書（実際の配信チャットで頻出する言葉）
+// カテゴリ別に分類 → ランダムで混合して使う
+// ============================================================
+
+// 共感・同意系
+const LOCAL_AGREE = [
+  'それな','わかる','わかりみ','わかりみが深い','ほんとそれ','確かに','たしかにw',
+  'それはある','わかるわ〜','めっちゃわかる','激しく同意','禿同','これ','これすき',
+  'わかりみしかない','ほんまそれ','せやな','そうそう','まさに','その通り',
+];
+
+// 笑い・草系
+const LOCAL_KUSA = [
+  'w','ww','www','wwww','草','草草','大草原','草生えた','ｗ','ｗｗ','ｗｗｗ',
+  'lol','笑','笑笑','わろた','わろてる','ふいたw','吹いたw','笑えるw','そこ笑うw',
+  'えwww','マジかw','嘘だろｗ','あかんw','だめだw','無理w','きついw',
+];
+
+// 驚き・感嘆系
+const LOCAL_SURPRISE = [
+  'マジか','マジで','え','えっ','えー','うそ','嘘だろ','ほんとに','まじかよ',
+  'はえ〜','へー','おお','ほお','すご','すごい','えぐい','えぐすぎ','やばい',
+  'やばすぎ','ヤバい','ヤバすぎる','え待って','ちょっとまって','待って待って',
+  'うそやん','マジかよ','信じられん','まじかw','えぇ〜','うわあ',
+];
+
+// 称賛・褒め系
+const LOCAL_PRAISE = [
+  '神','かみ','天才','うまい','うますぎ','さすが','さすがすぎる','強い','つよい',
+  'つよすぎ','最高','最強','好き','すき','ありがとう','ありがと','神回',
+  '神すぎる','好きすぎ','えらい','えらすぎ','かっこいい','かっこよすぎ',
+  'きゅんです','きたきた','これすき','センスある','才能','うまさが異常',
+];
+
+// 配信定番あいさつ・掛け声系
+const LOCAL_GREET = [
+  'おつ','おつかれ','おつでした','おつ〜','きた','きたー','きたきた','待ってた',
+  '8888','88888','888','パチパチ','👏','👏👏👏','初見です','初見','よろしく',
+  'おはようございます','こんにちは','こんにちわ','こんばんは','おはこん',
+  'おじゃまします','はじめまして','ろむってた','ろむ勢',
+];
+
+// ゲーム・配信特有スラング
+const LOCAL_GAME = [
+  'GG','gg','草','ナイス','nice','グッド','神プレイ','やるやん','うまいやん',
+  'ドンマイ','どんまい','まあしゃーない','次いこ','切り替えて','メンタル鋼',
+  'あーそこか','惜しい','惜しすぎ','あと少しだった','次は勝てる','ガチ勢か',
+  'えぐいムーブ','天才ムーブ','草ムーブ','なんで当たるんｗ','理不尽すぎ',
+];
+
+// テンション系・ノリ系
+const LOCAL_HYPE = [
+  'テンション上がる','アガる','アガってきた','テンアゲ','はあ〜たのし',
+  'えも','エモい','エモすぎ','最高すぎる','尊い','とうとい','神回確定',
+  'バチクソ楽しい','バチボコ','えぐい試合','これが見たかった','待ってたよ',
+  'しか勝たん','これしか勝たん','好きすぎて無理','泣きそう','きつい（褒め）',
+];
+
+// ツッコミ・ボケ系
+const LOCAL_TSUKKOMI = [
+  'はやっ','おそっ','なんで','なぜ','どうして','信じられん','それで大丈夫？',
+  'ほんとにw','そこかよw','なんでそうなるｗ','草しか生えない','ｗｗｗ',
+  '待って理解が追いつかない','天才すぎて逆に怖い','もうやだこの人w',
+  'すき（困惑）','好きだよ（呆れ）','なんなんw','いやw','いやいやw',
+];
+
+// 現代スラング
+const LOCAL_MODERN = [
+  'エモい','それガチ','ガチ勢','無理ゲー','沼る','バズる','しか勝たん',
+  'わかりみがマリアナ海溝','きつい','きつすぎ','無限に見れる','一生見れる',
+  '全人類見て','全員見ろ','解釈一致','バチバチ','バチボコ','秒でわかった',
+  'これが正解','優勝','完全優勝','完全に一致','神コンテンツ','尊死',
+];
+
+// 全カテゴリを合体した辞書
+const LOCAL_REACTIONS = [
+  ...LOCAL_AGREE, ...LOCAL_KUSA, ...LOCAL_SURPRISE, ...LOCAL_PRAISE,
+  ...LOCAL_GREET, ...LOCAL_GAME, ...LOCAL_HYPE, ...LOCAL_TSUKKOMI, ...LOCAL_MODERN,
+];
+
+function isKusa(text) { return KUSA_PATTERNS.some(p => p.test(text.trim())); }
+
+// ローカルコメントをランダムタイミングで大量放出
+function generateLocalFlood(baseDelay, totalDuration, count) {
+  for (let i = 0; i < count; i++) {
+    const delay = baseDelay + Math.random() * totalDuration;
+    setTimeout(() => {
+      dispatchComment(getOneViewer(), LOCAL_REACTIONS[Math.floor(Math.random() * LOCAL_REACTIONS.length)]);
+    }, delay);
+  }
+}
+
+// 草コメント専用フラッド（AIが草を使ったとき）
+function generateKusaFlood(baseDelay) {
+  const count = viewerCount < 200 ? rnd(3,6) : viewerCount < 1000 ? rnd(8,15) : rnd(15,35);
+  for (let i = 0; i < count; i++) {
+    setTimeout(() => {
+      dispatchComment(getOneViewer(), KUSA_VARIANTS[Math.floor(Math.random() * KUSA_VARIANTS.length)]);
+    }, baseDelay + i * rnd(40, 150));
+  }
+}
+
+// ============================================================
+// 状態管理
+// ============================================================
+let mediaStream = null;
+let autoInterval = null;
+let viewerFluctuateInterval = null;
+let commentCount = 0;
+let isAnalyzing = false;
+let nicoEnabled = false;
+let widgetEnabled = false;
+let popupWindow = null;
+let viewerCount = 0;
+const viewerHistory = [];
+const LANES = 12;
+const laneAvail = new Array(LANES).fill(0);
+
+// スタイルチップの管理
+const styleChips = document.getElementById('styleChips');
+styleChips.addEventListener('click', e => {
+  if (e.target.classList.contains('style-chip')) {
+    e.target.classList.toggle('active');
+  }
+});
+
+function getActiveStyles() {
+  return [...document.querySelectorAll('.style-chip.active')].map(c => c.dataset.style);
+}
+
+// ============================================================
+// 視聴者数の増減
+// ============================================================
+function startViewerFluctuation() {
+  viewerCount = Math.floor(Math.random() * 15) + 3;
+  updateViewerDisplay();
+
+  // 視聴者プールを初期生成
+  for (let i = 0; i < 50; i++) viewerPool.push(generateLocalViewer());
+
+  // 最初の参加通知
+  getViewers(3).forEach((v, i) => setTimeout(() => showJoinNotice(v), i * 700 + 300));
+
+  viewerFluctuateInterval = setInterval(() => {
+    const trend = viewerCount < 500 ? 4 : viewerCount < 2000 ? 1 : -2;
+    const delta = Math.floor(Math.random() * 30) - 12 + trend;
+    viewerCount = Math.max(1, viewerCount + delta);
+    if (Math.random() < 0.04) viewerCount += Math.floor(Math.random() * 80) + 30; // 急増
+    if (Math.random() < 0.02) viewerCount = Math.max(1, viewerCount - Math.floor(Math.random() * 50)); // 急減
+    updateViewerDisplay();
+
+    // 増えたとき参加通知
+    if (delta > 15 && Math.random() < 0.5) {
+      const v = generateLocalViewer();
+      viewerPool.push(v);
+      showJoinNotice(v);
+    }
+    // 減ったとき退出通知
+    if (delta < -8 && viewerPool.length > 0 && Math.random() < 0.4) {
+      showLeaveNotice(viewerPool[Math.floor(Math.random() * viewerPool.length)]);
+    }
+  }, 4000);
+}
+
+function stopViewerFluctuation() {
+  if (viewerFluctuateInterval) { clearInterval(viewerFluctuateInterval); viewerFluctuateInterval = null; }
+  viewerCount = 0;
+  updateViewerDisplay();
+}
+
+function updateViewerDisplay() {
+  document.getElementById('viewerCount').textContent = viewerCount.toLocaleString();
+  document.getElementById('widgetCount').textContent = viewerCount.toLocaleString();
+  viewerHistory.push(viewerCount);
+  if (viewerHistory.length > 20) viewerHistory.shift();
+  renderGraph();
+  if (popupWindow && !popupWindow.closed) popupWindow.updateViewerCount && popupWindow.updateViewerCount(viewerCount);
+}
+
+function renderGraph() {
+  const graph = document.getElementById('widgetGraph');
+  graph.innerHTML = '';
+  const max = Math.max(...viewerHistory, 1);
+  viewerHistory.forEach(v => {
+    const bar = document.createElement('div');
+    bar.className = 'widget-bar';
+    bar.style.height = Math.max(2, Math.round((v / max) * 20)) + 'px';
+    graph.appendChild(bar);
+  });
+}
+
+// ============================================================
+// 参加・退出通知
+// ============================================================
+function showJoinNotice(viewer) {
+  const chat = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'join-notice';
+  div.innerHTML = `<span>${viewer.emoji}</span><span style="color:${viewer.color};font-weight:700">${esc(viewer.name)}</span> が参加しました 👋`;
+  chat.appendChild(div);
+  scrollBottom();
+  if (popupWindow && !popupWindow.closed) popupWindow.addSystem && popupWindow.addSystem(`${viewer.emoji} ${viewer.name} が参加`, viewer.color);
+}
+
+function showLeaveNotice(viewer) {
+  const chat = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'leave-notice';
+  div.innerHTML = `<span>${viewer.emoji}</span><span style="font-weight:700">${esc(viewer.name)}</span> が退出しました`;
+  chat.appendChild(div);
+  scrollBottom();
+}
+
+// ============================================================
+// スマホ検出 & デモモード初期化
+// ============================================================
+const isMobile = !navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function';
+let demoMode = false;
+let demoTopic = '';
+
+// デスクトップ（getDisplayMedia対応）なら画面共有モードに切り替え
+setTimeout(function() {
+  if (!isMobile) {
+    // PCではデモ画面を隠して画面共有モードに切り替え
+    document.getElementById('shareBtn').style.display = 'flex';
+    document.getElementById('demoBtn').style.display = 'none';
+    document.getElementById('demoScreen').style.display = 'none';
+    document.getElementById('normalPlaceholder').style.display = 'block';
+  } else {
+    // スマホはそのままデモ画面を表示（デフォルトで表示済み）
+    document.getElementById('captureStatusText').textContent = 'テーマをタップしてデモを開始してください 📱';
+    addSystemMessage('📱 テーマをタップしてね');
+  }
+}, 0);
+
+function selectTopic(el, topic) {
+  demoTopic = topic;
+  var btns = document.querySelectorAll('.demo-topic');
+  for (var i = 0; i < btns.length; i++) btns[i].classList.remove('selected');
+  el.classList.add('selected');
+}
+
+function toggleDemo() {
+  if (!demoMode) {
+    if (!demoTopic) {
+      addSystemMessage('⚠️ まずテーマを選択してください');
+      return;
+    }
+    startDemoMode();
+  } else {
+    stopDemo();
+  }
+}
+
+function startDemoMode() {
+  demoMode = true;
+  document.getElementById('demoBtn').textContent = '📱 デモ中...';
+  document.getElementById('demoBtn').className = 'btn btn-secondary';
+  document.getElementById('stopDemoBtn').style.display = 'flex';
+  document.getElementById('aiStatus').style.display = 'block';
+  document.getElementById('captureStatus').classList.add('active');
+  document.getElementById('captureStatusText').textContent = `デモモード配信中「${demoTopic}」👀`;
+  document.getElementById('analyzeBtn').disabled = false;
+  document.getElementById('autoBtn').disabled = false;
+  startViewerFluctuation();
+  addSystemMessage(`🎮 デモモード開始！テーマ：${demoTopic}`);
+}
+
+function stopDemo() {
+  demoMode = false;
+  if (autoInterval) { clearInterval(autoInterval); autoInterval = null; }
+  stopViewerFluctuation();
+  document.getElementById('demoBtn').textContent = '📱 デモモード';
+  document.getElementById('demoBtn').className = 'btn btn-secondary';
+  document.getElementById('stopDemoBtn').style.display = 'none';
+  document.getElementById('aiStatus').style.display = 'none';
+  document.getElementById('captureStatus').classList.remove('active');
+  document.getElementById('captureStatusText').textContent = 'デモを停止しました';
+  document.getElementById('autoBtn').textContent = '▶ 自動モード';
+  document.getElementById('autoBtn').className = 'btn btn-green';
+  document.getElementById('autoBadge').style.display = 'none';
+  addSystemMessage('⏹ デモモードを停止しました');
+}
+
+// ============================================================
+// ローカルオンリーデモ（APIキー不要）
+// テーマ別コメント＋汎用リアクションをミックスして流す
+// ============================================================
+const TOPIC_COMMENTS = {
+  'ゲーム実況（FPS）':  ['ヘッドショット！','エイム神','壁抜けした！','リロードのタイミング草','残弾注意','このポジ強い','カバーはよ','グレ投げて','足音聞こえてる？','キルレやばい','チーターじゃん','このマップ苦手','フラッシュ刺さった','ランクどこ？','ドン勝いけるやん'],
+  'マインクラフト':     ['ダイヤ掘れた！','クリーパーこわ','エンダーマン目合った','ネザー行くの？','建築センスある','村人交易しよ','スケルトンうざい','洞窟探検楽しそう','TNT使って','マグマ落ちないで','エリトラほしい','拠点どこ？','MOD入れてる？','資材集め偉い','整地たいへんそう'],
+  '料理配信':           ['美味しそう！','包丁さばきすごい','材料なに？','レシピ教えて','火加減大事','いい匂いしそう','盛り付けきれい','プロみたい','カロリーは？','自分でも作れそう','真似したい','味見して','塩加減どう？','これ好きなやつ','ご飯すすみそう'],
+  '雑談配信':           ['わかるー','それな！','草','ためになる','もっと聞きたい','共感しかない','えー知らなかった','話うまい','ほんとそれ','笑えるw','深いな〜','なるほど','声聞きやすい','ずっと聞いてられる','また来ます'],
+  'プログラミング配信': ['コードきれい','エラー出た！','デバッグ大変そう','この書き方好き','変数名わかりやすい','コメントアウト多め','バグどこ？','コンパイル通った！','ライブラリ何使ってる？','Gitコミットして','テストは？','型エラーやん','関数分けたほうがいい','これ自分も詰まった','天才プログラマ'],
+  '歌ってみた':         ['うまい！','声好き','音程完璧','この曲好きすぎ','感情こもってる','サビ最高','音域広い','鳥肌立った','CDで聴きたい','また歌って','ライブで聴きたい','歌うますぎ','配信毎回来る','神回確定','泣きそう'],
+  '音楽ライブ配信':     ['最高すぎ','この曲やばい','ギターうまい','リズム感神','演奏聴き惚れた','次の曲なに？','セトリ教えて','音質いい','バンドで聴きたい','才能の無駄遣いw','鳥肌','リピートしてる','ベースかっこいい','ドラムえぐい','全部好き'],
+  'ポケモン対戦':       ['選出ミスった？','この構築つよい','メタ読みうまい','ダイマ温存して','S管理大事','ゴリ押し草','この技択すごい','選出画面長い','ランク何位？','天才プレイ','相手もつよい','一致弱点ついて','崩し方うまい','運ゲーやん','詰め筋ある'],
+};
+
+function localOnlyDemo() {
+  // viewerPoolが空なら初期化
+  if (viewerPool.length === 0) {
+    for (let i = 0; i < 30; i++) viewerPool.push(generateLocalViewer());
+  }
+  // viewerCountが0なら初期値をセット
+  if (viewerCount === 0) {
+    viewerCount = Math.floor(Math.random() * 50) + 10;
+    updateViewerDisplay();
+  }
+  if (!demoMode) startDemoMode();
+
+  const plan = calcBatchPlan(viewerCount);
+  const totalComments = plan.batches * plan.perBatch;
+  const streamDuration = 7000;
+  const topicComments = TOPIC_COMMENTS[demoTopic] || [];
+  // テーマコメント40% + 汎用リアクション60% でミックス
+  const pool = [
+    ...topicComments, ...topicComments,           // テーマ系×2
+    ...LOCAL_REACTIONS,                            // 汎用リアクション
+  ];
+
+  for (let i = 0; i < totalComments; i++) {
+    const delay = Math.random() * streamDuration;
+    setTimeout(() => {
+      const viewer = getOneViewer();
+      const text = pool[Math.floor(Math.random() * pool.length)];
+      // たまにスパチャ
+      if (Math.random() < 0.04) {
+        const tier = pickSCTier();
+        if (tier) { dispatchSuperchat(viewer, text, tier); return; }
+      }
+      dispatchComment(viewer, text);
+      if (isKusa(text)) generateKusaFlood(delay + 200);
+    }, delay);
+  }
+
+  // ローカルフラッドも追加
+  if (plan.localMult > 0) {
+    generateLocalFlood(500, streamDuration * 0.8, plan.localMult * plan.perBatch);
+  }
+}
+
+// ============================================================
+// 画面共有
+// ============================================================
+async function startCapture() {
+  try {
+    mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+    const video = document.getElementById('screenVideo');
+    video.srcObject = mediaStream;
+    video.style.display = 'block';
+    document.getElementById('placeholder').style.display = 'none';
+    document.getElementById('aiStatus').style.display = 'block';
+    document.getElementById('shareBtn').style.display = 'none';
+    document.getElementById('stopBtn').style.display = 'flex';
+    document.getElementById('analyzeBtn').disabled = false;
+    document.getElementById('autoBtn').disabled = false;
+    document.getElementById('captureStatus').classList.add('active');
+    document.getElementById('captureStatusText').textContent = '画面を共有中 — AIが視聴しています 👀';
+    mediaStream.getVideoTracks()[0].addEventListener('ended', stopCapture);
+    startViewerFluctuation();
+    addSystemMessage('🖥️ 配信を開始しました！');
+  } catch (err) {
+    if (err.name !== 'NotAllowedError') addSystemMessage('❌ 画面共有に失敗: ' + err.message);
+  }
+}
+
+function stopCapture() {
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  if (autoInterval) { clearInterval(autoInterval); autoInterval = null; }
+  stopViewerFluctuation();
+  const video = document.getElementById('screenVideo');
+  video.srcObject = null; video.style.display = 'none';
+  document.getElementById('placeholder').style.display = 'block';
+  document.getElementById('aiStatus').style.display = 'none';
+  document.getElementById('shareBtn').style.display = 'flex';
+  document.getElementById('stopBtn').style.display = 'none';
+  document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('autoBtn').disabled = true;
+  document.getElementById('autoBtn').textContent = '▶ 自動モード';
+  document.getElementById('autoBtn').className = 'btn btn-green';
+  document.getElementById('autoBadge').style.display = 'none';
+  document.getElementById('captureStatus').classList.remove('active');
+  document.getElementById('captureStatusText').textContent = '画面共有を停止しました';
+  addSystemMessage('⏹ 配信を終了しました');
+}
+
+function captureFrame() {
+  const video = document.getElementById('screenVideo');
+  const canvas = document.getElementById('captureCanvas');
+  if (!video.videoWidth) return null;
+  const scale = Math.min(1, 1280 / video.videoWidth);
+  canvas.width  = Math.round(video.videoWidth  * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.7);
+}
+
+// ============================================================
+// AI分析・コメント生成
+// ============================================================
+async function analyzeNow() {
+  if (isAnalyzing) return;
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const isDemo = !!demoTopic && !mediaStream;
+  if (!mediaStream && !isDemo) { addSystemMessage('⚠️ テーマを選んでください'); return; }
+
+  // APIキーなし × デモ → ローカルオンリー
+  if (!apiKey && isDemo) {
+    if (!demoMode) startDemoMode();
+    localOnlyDemo();
+    return;
+  }
+  if (!apiKey) { addSystemMessage('⚠️ APIキーを入力してください'); return; }
+
+  const frame = demoMode ? null : captureFrame();
+  if (!demoMode && !frame) return;
+
+  isAnalyzing = true;
+  document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('thinkingIndicator').style.display = 'flex';
+
+  try {
+    const base64Data = frame ? frame.split(',')[1] : null;
+    const plan = calcBatchPlan(viewerCount);
+    const styles = getActiveStyles();
+    const styleText = styles.length > 0 ? `コメントのスタイル：${styles.join('・')}` : 'ふつうのコメント';
+
+    // バッチを並列で投げる
+    const batchPromises = Array.from({ length: plan.batches }, (_, bi) => {
+      const commenters = getViewers(plan.perBatch);
+      const viewerList = commenters.map(v => `${v.name}${v.emoji}`).join('　');
+
+      // Gemini API用コンテンツ構築
+      const promptText = demoMode
+        ? `日本のライブ配信のチャット欄です。配信内容：「${demoTopic}」をやっています。以下の視聴者${plan.perBatch}人がコメントします。
+
+視聴者：${viewerList}
+${styleText}
+現在の視聴者数：${viewerCount.toLocaleString()}人
+
+ルール：
+- 短くテンポよく（5〜20文字）
+- 配信内容に具体的に反応する
+- スパチャも自然に混ぜる（視聴者数が多いほど確率UP）
+- コメント者の名前は上記リストから使う
+- JSONのみ返答（マークダウン不要）
+
+{"comments":[{"name":"名前","type":"comment","text":"内容"}]}`
+        : `日本のライブ配信のチャット欄です。以下の視聴者${plan.perBatch}人がコメントします。
+
+視聴者：${viewerList}
+${styleText}
+現在の視聴者数：${viewerCount.toLocaleString()}人
+
+ルール：
+- 短くテンポよく（5〜20文字）
+- 画面の内容に具体的に反応する
+- スパチャも自然に混ぜる（視聴者数が多いほど確率UP）
+- コメント者の名前は上記リストから使う
+- JSONのみ返答（マークダウン不要）
+
+{"comments":[{"name":"名前","type":"comment","text":"内容"}]}`;
+
+      // Gemini parts（画像あり/なし）
+      const parts = base64Data
+        ? [
+            { inline_data: { mime_type: 'image/jpeg', data: base64Data } },
+            { text: promptText }
+          ]
+        : [{ text: promptText }];
+
+      return fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts }] })
+        }
+      )
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) throw new Error(data.error.message);
+        const raw = data.candidates[0].content.parts.map(p => p.text || '').join('');
+        const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+        return { comments: parsed.comments, commenters };
+      });
+    });
+
+    // コメント間隔：視聴者数が多いほど短く（速く流れる）
+    const totalAI = plan.batches * plan.perBatch;
+    const streamDuration = 8000; // コメントを流す総時間(ms)
+    const interval = Math.max(40, Math.min(400, streamDuration / totalAI));
+
+    let globalDelay = 0;
+
+    batchPromises.forEach(promise => {
+      promise.then(({ comments, commenters }) => {
+        comments.forEach((item) => {
+          const delay = globalDelay;
+          globalDelay += interval + Math.random() * interval * 0.5;
+          setTimeout(() => {
+            const viewer = commenters.find(v => v.name === item.name) || getOneViewer();
+            if (item.type === 'superchat') {
+              const tier = pickSCTier();
+              if (tier) { dispatchSuperchat(viewer, item.text, tier); return; }
+            }
+            dispatchComment(viewer, item.text);
+            // 草コメントはさらにフラッド
+            if (isKusa(item.text)) generateKusaFlood(delay + interval);
+          }, delay);
+        });
+      }).catch(err => addSystemMessage('❌ ' + err.message));
+    });
+
+    // ローカルリアクションで流速を補完（localMult × perBatch 件）
+    if (plan.localMult > 0) {
+      const localCount = plan.localMult * plan.perBatch;
+      generateLocalFlood(interval * 2, streamDuration * 0.9, localCount);
+    }
+
+    // 全バッチ完了後にフラグ解除
+    Promise.allSettled(batchPromises).then(() => {
+      isAnalyzing = false;
+      document.getElementById('thinkingIndicator').style.display = 'none';
+      if (mediaStream) document.getElementById('analyzeBtn').disabled = false;
+    });
+    return; // finallyをスキップ
+
+  } catch (err) {
+    addSystemMessage('❌ ' + err.message);
+  } finally {
+    isAnalyzing = false;
+    document.getElementById('thinkingIndicator').style.display = 'none';
+    if (mediaStream) document.getElementById('analyzeBtn').disabled = false;
+  }
+}
+
+// ============================================================
+// コメント配信（全出力先に送る）
+// ============================================================
+function dispatchComment(viewer, text) {
+  addComment(viewer, text);
+  if (nicoEnabled) addNicoComment(viewer, text);
+  if (popupWindow && !popupWindow.closed) popupWindow.addComment && popupWindow.addComment(viewer, text);
+}
+
+function dispatchSuperchat(viewer, text, tier) {
+  addSuperchat(viewer, text, tier);
+  if (nicoEnabled) addNicoSuperchat(viewer, text, tier);
+  if (popupWindow && !popupWindow.closed) popupWindow.addSuperchat && popupWindow.addSuperchat(viewer, text, tier);
+  viewerCount += Math.floor(Math.random() * 30) + 10;
+  updateViewerDisplay();
+}
+
+// ============================================================
+// ニコニコ風オーバーレイ
+// ============================================================
+function toggleNico() {
+  nicoEnabled = !nicoEnabled;
+  const btn = document.getElementById('nicoBtn');
+  const overlay = document.getElementById('overlayContainer');
+  btn.textContent = nicoEnabled ? '🎌 ニコニコ風 ON' : '🎌 ニコニコ風 OFF';
+  btn.className = nicoEnabled ? 'btn btn-green' : 'btn btn-secondary';
+  btn.style.cssText = 'font-size:12px;padding:7px 12px';
+  overlay.style.display = nicoEnabled ? 'block' : 'none';
+}
+
+function pickLane() {
+  const now = Date.now();
+  let best = 0;
+  for (let i = 1; i < LANES; i++) { if (laneAvail[i] < laneAvail[best]) best = i; }
+  const h = document.getElementById('screenPreview').offsetHeight / LANES;
+  laneAvail[best] = now + 5500;
+  return best * h + 4;
+}
+
+function addNicoComment(viewer, text) {
+  const overlay = document.getElementById('overlayContainer');
+  const pw = document.getElementById('screenPreview').offsetWidth;
+  const duration = 5 + Math.random() * 3;
+  const el = document.createElement('div');
+  el.className = 'nico-comment';
+  el.textContent = viewer.emoji + ' ' + text;
+  el.style.color = viewer.color;
+  el.style.top = pickLane() + 'px';
+  el.style.left = pw + 'px';
+  el.style.animationDuration = duration + 's';
+  overlay.appendChild(el);
+  setTimeout(() => el.remove(), (duration + 0.5) * 1000);
+}
+
+function addNicoSuperchat(viewer, text, tier) {
+  const overlay = document.getElementById('overlayContainer');
+  const scColors = { 'sc-red':'#e91916','sc-orange':'#ff6600','sc-yellow':'#ffb800','sc-green':'#00b86b','sc-blue':'#1565c0','sc-teal':'#00acc1' };
+  const amount = tier.amounts[Math.floor(Math.random() * tier.amounts.length)];
+  const el = document.createElement('div');
+  el.className = 'nico-superchat';
+  el.style.background = scColors[tier.class] || '#9147ff';
+  el.style.color = tier.class === 'sc-yellow' ? '#000' : '#fff';
+  el.innerHTML = `<div style="font-size:11px;opacity:.85">💎 ${esc(viewer.name)} — ${amount}</div><div style="font-size:15px;font-weight:700;margin-top:4px">${esc(text)}</div>`;
+  overlay.appendChild(el);
+  setTimeout(() => el.remove(), 5500);
+}
+
+// ============================================================
+// 視聴者数ウィジェット
+// ============================================================
+function toggleWidget() {
+  widgetEnabled = !widgetEnabled;
+  const btn = document.getElementById('widgetBtn');
+  const widget = document.getElementById('viewerWidget');
+  btn.textContent = widgetEnabled ? '📊 視聴者数 ON' : '📊 視聴者数 OFF';
+  btn.className = widgetEnabled ? 'btn btn-green' : 'btn btn-secondary';
+  btn.style.cssText = 'font-size:12px;padding:7px 12px';
+  widget.style.display = widgetEnabled ? 'flex' : 'none';
+}
+
+// ============================================================
+// 別ウィンドウ
+// ============================================================
+function openPopupWindow() {
+  if (popupWindow && !popupWindow.closed) { popupWindow.focus(); return; }
+  const html = `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><title>💬 AIチャット</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Oswald:wght@700&display=swap');
+:root{--bg:#0e0e10;--surface:#18181b;--border:#2a2a2d;--purple:#9147ff;--green:#00db7f;--red:#e91916;--text:#efeff1;--muted:#adadb8;}
+*{margin:0;padding:0;box-sizing:border-box}body{background:var(--bg);color:var(--text);font-family:'Noto Sans JP',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.header{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 14px;font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.live{background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;animation:pulse 2s infinite}
+.vc{background:var(--surface);border-bottom:1px solid var(--border);padding:6px 14px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-shrink:0}
+.vdot{width:6px;height:6px;background:var(--red);border-radius:50%;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+.msgs{flex:1;overflow-y:auto;padding:8px 0;display:flex;flex-direction:column;gap:2px}
+.msgs::-webkit-scrollbar{width:4px}.msgs::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.msg{padding:4px 12px;font-size:13px;line-height:1.5;display:flex;gap:6px;align-items:flex-start}
+.msg:hover{background:rgba(255,255,255,.03)}
+.av{width:18px;height:18px;border-radius:50%;flex-shrink:0;margin-top:1px;font-size:10px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.un{font-weight:700;margin-right:4px}
+.sc{margin:6px 10px;border-radius:8px;padding:10px 12px;animation:si .4s cubic-bezier(.34,1.56,.64,1)}
+.sc-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}.sc-n{font-weight:700;font-size:13px}.sc-a{font-weight:900;font-size:15px;font-family:'Oswald',sans-serif}.sc-m{font-size:13px;line-height:1.5}
+.sc-red{background:linear-gradient(135deg,#e91916,#c0392b);color:#fff}.sc-orange{background:linear-gradient(135deg,#ff6600,#e65c00);color:#fff}.sc-yellow{background:linear-gradient(135deg,#ffb800,#f39c12);color:#000}.sc-green{background:linear-gradient(135deg,#00b86b,#009959);color:#fff}.sc-blue{background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff}.sc-teal{background:linear-gradient(135deg,#00acc1,#00838f);color:#fff}
+@keyframes si{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.cnt{margin-left:auto;background:var(--purple);color:#fff;font-size:11px;padding:2px 7px;border-radius:10px}
+.sys{padding:4px 12px;font-size:11px;color:var(--muted)}.join{padding:4px 12px;font-size:11px}
+</style></head><body>
+<div class="header"><span class="live">● LIVE</span>💬 AI視聴者チャット<span class="cnt" id="cnt">0</span></div>
+<div class="vc"><div class="vdot"></div><span id="vcText">0 人が視聴中</span></div>
+<div class="msgs" id="msgs"><div class="sys">👋 メインウィンドウでコメントが来るとここにも表示されます</div></div>
+<script>
+let n=0;
+function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function scroll(){const m=document.getElementById('msgs');m.scrollTop=m.scrollHeight}
+window.updateViewerCount=c=>document.getElementById('vcText').textContent=c.toLocaleString()+' 人が視聴中';
+window.addComment=function(viewer,text){
+  const m=document.getElementById('msgs'),d=document.createElement('div');d.className='msg';
+  d.innerHTML='<div class="av" style="background:'+viewer.color+'22;color:'+viewer.color+';border:1px solid '+viewer.color+'44">'+viewer.emoji+'</div><div><span class="un" style="color:'+viewer.color+'">'+viewer.name+'</span><span>'+esc(text)+'</span></div>';
+  m.appendChild(d);document.getElementById('cnt').textContent=++n;scroll();
+};
+window.addSuperchat=function(viewer,text,tier){
+  const m=document.getElementById('msgs'),amount=tier.amounts[Math.floor(Math.random()*tier.amounts.length)],d=document.createElement('div');
+  d.className='sc '+tier.class;d.innerHTML='<div class="sc-h"><span class="sc-n">💎 '+viewer.name+'</span><span class="sc-a">'+amount+'</span></div><div class="sc-m">'+esc(text)+'</div>';
+  m.appendChild(d);document.getElementById('cnt').textContent=++n;scroll();
+};
+window.addSystem=function(text,color){
+  const m=document.getElementById('msgs'),d=document.createElement('div');d.className='join';
+  d.style.color=color||'var(--muted)';d.textContent=text;m.appendChild(d);scroll();
+};
+<\/script></body></html>`;
+  popupWindow = window.open('', 'aiChatPopup', 'width=340,height=620,resizable=yes');
+  popupWindow.document.open(); popupWindow.document.write(html); popupWindow.document.close();
+  addSystemMessage('🪟 別ウィンドウを開きました');
+  document.getElementById('popupBtn').textContent = '🪟 ウィンドウ前面に';
+}
+
+// ============================================================
+// 自動モード
+// ============================================================
+function toggleAuto() {
+  if (autoInterval) {
+    clearInterval(autoInterval); autoInterval = null;
+    document.getElementById('autoBtn').textContent = '▶ 自動モード';
+    document.getElementById('autoBtn').className = 'btn btn-green';
+    document.getElementById('autoBadge').style.display = 'none';
+    addSystemMessage('⏸ 自動モードを停止しました');
+  } else {
+    const interval = parseInt(document.getElementById('intervalSelect').value);
+    autoInterval = setInterval(analyzeNow, interval);
+    document.getElementById('autoBtn').textContent = '⏸ 停止';
+    document.getElementById('autoBtn').className = 'btn btn-secondary';
+    document.getElementById('autoBadge').style.display = 'inline-flex';
+    addSystemMessage(`✅ 自動モード開始（${interval / 1000}秒おき）`);
+    analyzeNow();
+  }
+}
+
+// ============================================================
+// スパチャ
+// ============================================================
+const SC_TIERS = [
+  { class:'sc-red',    amounts:['¥50,000','¥100,000'], prob:0.02 },
+  { class:'sc-orange', amounts:['¥10,000','¥20,000'],  prob:0.05 },
+  { class:'sc-yellow', amounts:['¥5,000'],              prob:0.08 },
+  { class:'sc-green',  amounts:['¥2,000','¥3,000'],    prob:0.12 },
+  { class:'sc-blue',   amounts:['¥1,000'],              prob:0.18 },
+  { class:'sc-teal',   amounts:['¥200','¥500'],         prob:0.25 },
+];
+function pickSCTier() {
+  let r=Math.random(),c=0;
+  for(const t of SC_TIERS){c+=t.prob;if(r<c)return t;}
+  return null;
+}
+
+// ============================================================
+// チャット表示
+// ============================================================
+function addComment(viewer, text) {
+  const chat = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg';
+  div.innerHTML = `<div class="chat-avatar" style="background:${viewer.color}22;color:${viewer.color};border:1px solid ${viewer.color}44">${viewer.emoji}</div><div><span class="chat-username" style="color:${viewer.color}">${esc(viewer.name)}</span><span class="chat-text">${esc(text)}</span></div>`;
+  chat.appendChild(div); tick();
+}
+
+function addSuperchat(viewer, text, tier) {
+  const chat = document.getElementById('chatMessages');
+  const amount = tier.amounts[Math.floor(Math.random() * tier.amounts.length)];
+  const div = document.createElement('div');
+  div.className = `superchat ${tier.class}`;
+  div.innerHTML = `<div class="superchat-header"><span class="superchat-name">💎 ${esc(viewer.name)}</span><span class="superchat-amount">${amount}</span></div><div class="superchat-message">${esc(text)}</div>`;
+  chat.appendChild(div); tick();
+}
+
+function addSystemMessage(text) {
+  const chat = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg';
+  div.style.cssText = 'color:#adadb8;font-size:12px;padding:6px 14px;';
+  div.textContent = text;
+  chat.appendChild(div); scrollBottom();
+}
+
+function tick() { commentCount++; document.getElementById('commentCount').textContent = commentCount; scrollBottom(); }
+function scrollBottom() { const c=document.getElementById('chatMessages'); c.scrollTop=c.scrollHeight; }
+function esc(t) { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+setTimeout(() => addSystemMessage('👋 配信へようこそ！「画面共有を開始」でデスクトップを共有してね'), 500);
+setTimeout(() => addSystemMessage('💡 コメントスタイルを選んでからスタートするとより個性が出ます'), 1500);
+
+</script>
+</body>
+</html>
