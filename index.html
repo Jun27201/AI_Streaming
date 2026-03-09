@@ -262,6 +262,7 @@
       <button class="btn btn-secondary" id="nicoBtn" onclick="toggleNico()" style="font-size:12px;padding:7px 12px">🎌 ニコニコ風 OFF</button>
       <button class="btn btn-secondary" id="widgetBtn" onclick="toggleWidget()" style="font-size:12px;padding:7px 12px">📊 視聴者数 OFF</button>
       <button class="btn btn-secondary" id="popupBtn" onclick="openPopupWindow()" style="font-size:12px;padding:7px 12px">🪟 別ウィンドウ</button>
+      <button class="btn btn-secondary" id="nicoWinBtn" onclick="openNicoWindow()" style="font-size:12px;padding:7px 12px">🎌 ニコニコ専用画面</button>
     </div>
 
     <div class="api-section">
@@ -898,12 +899,14 @@ function dispatchComment(viewer, text) {
   addComment(viewer, text);
   if (nicoEnabled) addNicoComment(viewer, text);
   if (popupWindow && !popupWindow.closed) popupWindow.addComment && popupWindow.addComment(viewer, text);
+  if (nicoWindow && !nicoWindow.closed) nicoWindow.addNicoComment && nicoWindow.addNicoComment(text, viewer.color);
 }
 
 function dispatchSuperchat(viewer, text, tier) {
   addSuperchat(viewer, text, tier);
   if (nicoEnabled) addNicoSuperchat(viewer, text, tier);
   if (popupWindow && !popupWindow.closed) popupWindow.addSuperchat && popupWindow.addSuperchat(viewer, text, tier);
+  if (nicoWindow && !nicoWindow.closed) nicoWindow.addNicoSuperchat && nicoWindow.addNicoSuperchat(viewer, text, tier);
   viewerCount += Math.floor(Math.random() * 30) + 10;
   updateViewerDisplay();
 }
@@ -1027,6 +1030,130 @@ window.addSystem=function(text,color){
   popupWindow.document.open(); popupWindow.document.write(html); popupWindow.document.close();
   addSystemMessage('🪟 別ウィンドウを開きました');
   document.getElementById('popupBtn').textContent = '🪟 ウィンドウ前面に';
+}
+
+// ============================================================
+// ニコニコ専用ウィンドウ（常に最前面固定用）
+// ============================================================
+let nicoWindow = null;
+
+function openNicoWindow() {
+  if (nicoWindow && !nicoWindow.closed) { nicoWindow.focus(); return; }
+
+  // 画面サイズ取得
+  const sw = screen.width, sh = screen.height;
+  const ww = sw, wh = sh;
+
+  const html = `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><title>🎌 ニコニコオーバーレイ</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@700;900&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  width:100vw;height:100vh;
+  background:transparent;
+  overflow:hidden;
+  pointer-events:none;
+}
+.lane{position:absolute;left:0;width:100%;white-space:nowrap;}
+.comment{
+  position:absolute;
+  font-family:'Noto Sans JP',sans-serif;
+  font-weight:700;
+  font-size:28px;
+  color:#fff;
+  text-shadow:2px 2px 0 #000,-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,0 2px 0 #000,0 -2px 0 #000,2px 0 0 #000,-2px 0 0 #000;
+  white-space:nowrap;
+  animation:scroll linear forwards;
+  will-change:transform;
+}
+@keyframes scroll{
+  from{transform:translateX(100vw);}
+  to{transform:translateX(-110%);}
+}
+.superchat{
+  position:fixed;
+  bottom:60px;left:50%;transform:translateX(-50%);
+  padding:12px 28px;border-radius:12px;
+  font-family:'Noto Sans JP',sans-serif;
+  font-weight:900;font-size:22px;color:#fff;
+  text-align:center;
+  animation:scpop .5s cubic-bezier(.34,1.56,.64,1) forwards;
+  pointer-events:none;
+  z-index:9999;
+  text-shadow:1px 1px 0 rgba(0,0,0,.5);
+}
+@keyframes scpop{from{opacity:0;transform:translateX(-50%) scale(.5)}to{opacity:1;transform:translateX(-50%) scale(1)}}
+.hint{
+  position:fixed;top:8px;left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,.6);color:rgba(255,255,255,.7);
+  font-family:'Noto Sans JP',sans-serif;font-size:12px;
+  padding:4px 14px;border-radius:20px;
+  pointer-events:none;
+  white-space:nowrap;
+}
+</style></head>
+<body>
+<div class="hint">🎌 ニコニコオーバーレイ — このウィンドウを最前面に固定してください</div>
+<div id="overlay"></div>
+<script>
+const LANES = 12;
+const laneH = Math.floor(window.innerHeight / LANES);
+const laneOccupied = new Array(LANES).fill(0);
+
+function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+function getFreeLane() {
+  const now = Date.now();
+  let best = 0, bestTime = Infinity;
+  for (let i = 0; i < LANES; i++) {
+    if (laneOccupied[i] <= now) return i;
+    if (laneOccupied[i] < bestTime) { bestTime = laneOccupied[i]; best = i; }
+  }
+  return best;
+}
+
+window.addNicoComment = function(text, color, duration) {
+  const dur = duration || (8 + Math.random() * 4);
+  const lane = getFreeLane();
+  const el = document.createElement('div');
+  el.className = 'comment';
+  el.style.color = color || '#fff';
+  el.style.top = (lane * laneH + 4) + 'px';
+  el.style.fontSize = (22 + Math.floor(Math.random() * 12)) + 'px';
+  el.style.animationDuration = dur + 's';
+  el.textContent = text;
+  document.getElementById('overlay').appendChild(el);
+  // レーン占有時間を記録（コメントが通過しきるまで）
+  laneOccupied[lane] = Date.now() + dur * 1000 * 0.4;
+  el.addEventListener('animationend', () => el.remove());
+};
+
+window.addNicoSuperchat = function(viewer, text, tier) {
+  const colors = {
+    'sc-red':'#e91916','sc-orange':'#ff6600','sc-yellow':'#ffb800',
+    'sc-green':'#00b86b','sc-blue':'#1565c0','sc-teal':'#00acc1'
+  };
+  const bg = colors[tier.class] || '#9147ff';
+  const amount = tier.amounts[Math.floor(Math.random()*tier.amounts.length)];
+  const el = document.createElement('div');
+  el.className = 'superchat';
+  el.style.background = bg;
+  el.innerHTML = '💎 ' + esc(viewer.name) + ' ' + amount + '<br><span style="font-size:16px;font-weight:700">' + esc(text) + '</span>';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 5000);
+};
+<\/script>
+</body></html>`;
+
+  nicoWindow = window.open('', 'nicoOverlay',
+    'width=' + sw + ',height=' + sh + ',left=0,top=0,resizable=yes,scrollbars=no,toolbar=no,menubar=no,location=no,status=no'
+  );
+  nicoWindow.document.open();
+  nicoWindow.document.write(html);
+  nicoWindow.document.close();
+  addSystemMessage('🎌 ニコニコ専用ウィンドウを開きました — 最前面に固定してください');
+  document.getElementById('nicoWinBtn').textContent = '🎌 前面に戻す';
 }
 
 // ============================================================
